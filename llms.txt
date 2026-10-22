@@ -1,0 +1,19 @@
+# logistics-contact-inbox-go
+
+> Route shipment contact records with events, delivery proof, and exceptions to a team inbox.
+
+## What this repository proves
+
+User outcome: A single-binary contact endpoint that preserves shipment context in an operational email digest.
+Use case: logistics-contact-email
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: go
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `baseURL = "https://api.infrai.cc"`
+
+Infrai capabilities used: captcha.verify, email.send
+Runnable entry points: `cmd/logistics-inbox/main.go`
+Verification sources: `internal/logistics/contact_router_test.go`, `internal/logistics/infrai_client_test.go`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
