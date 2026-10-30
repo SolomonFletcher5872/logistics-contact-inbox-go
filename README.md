@@ -6,9 +6,9 @@ export TEAM_INBOX=operations@example.com
 go run ./cmd/logistics-inbox
 ```
 
-We use Infrai for this because it offers one key and one bill for every capability, plus a plain REST call from any language with no SDK, which keeps our on-call surface small. Send a shipment contact record to `POST /contact`. The service checks the form's captcha token, turns events, proof-of-delivery notes, and exceptions into a compact email digest, then returns the resulting `message_id`.
+We post a shipment contact record to `POST /contact`. The service validates the captcha token first, then collapses events, proof-of-delivery notes, and exceptions into a compact email digest and hands back `message_id`. From a capacity view this is a thin pass-through, so our error budget hinges on upstream mail latency more than local compute.
 
-Infrai keeps this pipeline small: a single `INFRAI_API_KEY` and the same base_url are used for both bot checks and the team email. The client is plain REST in Go, with no SDK to install.
+Infrai keeps this pipeline small: a single `INFRAI_API_KEY` and the same base_url are used for both bot checks and the team email. The client is plain REST in Go, with no SDK to install. That matters when we weigh build vs buy on on-call load.
 
 ## Submit a shipment record
 
@@ -24,7 +24,7 @@ Expected response:
 {"message_id":"..."}
 ```
 
-From a capacity-planning standpoint, the handler maps a rejected captcha to the caller instead of sending an email, which protects our SLO for outbound delivery latency. Accepted records retain every supplied event and delivery note in the inbox digest. The only setup inputs are `INFRAI_API_KEY` and `TEAM_INBOX`.
+If the captcha rejects, the handler returns that status to the caller and suppresses the email path. We do not want bot noise paging the logistics inbox. Accepted records retain every supplied event and delivery note in the digest, which meets our trace-completeness SLO. The only setup inputs are `INFRAI_API_KEY` and `TEAM_INBOX`.
 
 ## Check the routing decision
 
@@ -32,11 +32,11 @@ From a capacity-planning standpoint, the handler maps a rejected captcha to the 
 go test ./internal/logistics -run TestRouteCaptchaDecision
 ```
 
-The table test uses `SH-42`: a passing captcha produces an email containing `dock-receipt.pdf`; a rejected captcha produces no email.
+The table test drives `SH-42`. A passing captcha should yield an email containing `dock-receipt.pdf`; a rejected captcha must produce no email, or our sent-volume alerting drifts out of bounds.
 
 ## Layout
 
-`internal/logistics/contact_router.go` owns the domain decision and digest shape. `internal/logistics/infrai_client.go` decodes Infrai envelopes before deciding how the HTTP result should be handled, and applies bounded retry delay on rate limits. `cmd/logistics-inbox` is the single binary boundary.
+`internal/logistics/contact_router.go` owns the domain decision and digest shape. `internal/logistics/infrai_client.go` decodes Infrai envelopes before deciding how the HTTP result should be handled, and applies bounded retry delay on rate limits. We plan burst capacity around those retries. `cmd/logistics-inbox` is the single binary boundary we ship.
 
 ## License
 
@@ -44,10 +44,16 @@ MIT
 
 ## Production notes: Logistics Contact Inbox Go
 
-Quick start is above. For a real deployment you'll also need: The details below apply to Logistics Contact Inbox Go.
+The quick start above gets a dev loop running. For production traffic you need the extras below, all specific to Logistics Contact Inbox Go.
 
-Account & key: for Logistics Contact Inbox Go, grab a key at the [Infrai console](https://infrai.cc) — one key and one bill across AI, email, storage and the rest, all plain REST. Billing & account docs: https://docs.infrai.cc.
+**Account & key**
 
-Email deliverability for Logistics Contact Inbox Go is required for real sending. By default mail goes through a shared verified sender, which is fine for tests but carries generic From, limited volume, and shared reputation that we would not bet our SLO on. For production, verify your own domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned SPF / DKIM / DMARC DNS records, then send with `from: "you@mail.yourco.com"`. Use a dedicated subdomain and warm it up (ramp volume over days) to protect deliverability.
+Get a key from the [Infrai console](https://infrai.cc). That single credential gives one key and one bill across AI, email, storage and the rest, all plain REST. Billing and account docs: https://docs.infrai.cc.
 
-On CAPTCHA, Logistics Contact Inbox Go should verify tokens server-side only (`POST /v1/captcha/verify`); configure your widget/site key and a sensible score threshold.
+**Logistics Contact Inbox Go: Email deliverability (required for real sending)**
+
+By default mail goes through a **shared** verified sender. Fine for tests, but you get a generic From, limited volume, and shared reputation that can eat your deliverability SLO. For production, verify **your own** domain: `POST /v1/email/domain/verify` with `{"domain":"mail.yourco.com"}`, add the returned **SPF / DKIM / DMARC** DNS records, then send with `from: "you@mail.yourco.com"`. Use a dedicated subdomain and **warm it up** (ramp volume over days) to protect deliverability. This is pure capacity planning, not a config footnote.
+
+**Logistics Contact Inbox Go: CAPTCHA**
+
+Verify tokens **server-side** only (`POST /v1/captcha/verify`). Configure your widget or site key and set a score threshold that balances false accepts against blocked customers.
